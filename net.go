@@ -26,8 +26,54 @@ import (
 	"time"
 
 	"github.com/eclipse/paho.mqtt.golang/packets"
+	"github.com/lucas-clemente/quic-go"
 	"golang.org/x/net/proxy"
 )
+
+type QuicConn struct {
+	session    quic.Session
+	onlyStream quic.Stream
+}
+
+func NewQuicConn(session quic.Session) (*QuicConn, error) {
+	if stream, err := session.OpenStreamSync(); err != nil {
+		return nil, err
+	} else {
+		return &QuicConn{session: session, onlyStream: stream}, nil
+	}
+}
+
+func (c *QuicConn) Read(b []byte) (n int, err error) {
+	return c.onlyStream.Read(b)
+}
+
+func (c *QuicConn) Write(b []byte) (n int, err error) {
+	return c.onlyStream.Write(b)
+}
+
+func (c *QuicConn) Close() error {
+	return c.session.Close()
+}
+
+func (c *QuicConn) LocalAddr() net.Addr {
+	return c.session.LocalAddr()
+}
+
+func (c *QuicConn) RemoteAddr() net.Addr {
+	return c.session.RemoteAddr()
+}
+
+func (c *QuicConn) SetDeadline(t time.Time) error {
+	return c.onlyStream.SetDeadline(t)
+}
+
+func (c *QuicConn) SetReadDeadline(t time.Time) error {
+	return c.onlyStream.SetReadDeadline(t)
+}
+
+func (c *QuicConn) SetWriteDeadline(t time.Time) error {
+	return c.onlyStream.SetWriteDeadline(t)
+}
 
 func signalError(c chan<- error, err error) {
 	select {
@@ -95,6 +141,16 @@ func openConnection(uri *url.URL, tlsc *tls.Config, timeout time.Duration, heade
 		}
 
 		return tlsConn, nil
+	case "quic":
+		if session, err := quic.DialAddr(uri.Host, tlsc, nil); err != nil {
+			return nil, err
+		} else {
+			if conn, err := NewQuicConn(session); err != nil {
+				return nil, err
+			} else {
+				return conn, nil
+			}
+		}
 	}
 	return nil, errors.New("Unknown protocol")
 }
